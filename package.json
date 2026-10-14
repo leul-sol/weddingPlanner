@@ -1,0 +1,26 @@
+{
+  "name": "wedlink",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WedLink — Multi-wedding digital invitation, QR guest verification, and album management platform",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @wedlink/api prisma:migrate",
+    "db:seed": "pnpm --filter @wedlink/api prisma:seed",
+    "db:studio": "pnpm --filter @wedlink/api prisma:studio"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "prettier": "^3.4.2"
+  }
+}

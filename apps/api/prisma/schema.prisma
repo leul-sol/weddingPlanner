@@ -1,0 +1,467 @@
+// WedLink database schema
+// Core principle: every wedding-owned record carries a weddingId FK.
+// Isolation is enforced in application guards AND reinforced by these relations.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Enums ───────────────────────────
+
+enum PlatformRole {
+  SUPER_ADMIN
+  USER
+}
+
+enum WeddingRole {
+  OWNER
+  ORGANIZER
+  ENTRANCE_STAFF
+  PHOTOGRAPHER
+}
+
+enum WeddingStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+  SUSPENDED
+}
+
+enum InvitationType {
+  INDIVIDUAL
+  GROUP
+}
+
+enum InvitationStatus {
+  DRAFT
+  PUBLISHED
+  REVOKED
+}
+
+enum RSVPStatus {
+  PENDING
+  CONFIRMED
+  DECLINED
+  CANCELLED
+}
+
+enum CheckInResult {
+  ADMITTED
+  REJECTED_UNKNOWN
+  REJECTED_REVOKED
+  REJECTED_WRONG_WEDDING
+  REJECTED_WRONG_EVENT
+  REJECTED_ALLOWANCE_EXCEEDED
+}
+
+enum AlbumPrivacy {
+  PRIVATE
+  INVITED
+  PUBLIC
+}
+
+enum MediaStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum GuestLanguage {
+  EN
+  AM
+}
+
+// ─────────────────────────── Identity & access ───────────────────────────
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  name         String
+  platformRole PlatformRole @default(USER)
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  ownedWeddings Wedding[]           @relation("WeddingOwner")
+  memberships   WeddingMembership[]
+  checkIns      CheckInRecord[]
+  moderations   MediaModerationRecord[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+
+  @@index([platformRole])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model WeddingMembership {
+  id          String      @id @default(cuid())
+  userId      String
+  weddingId   String
+  role        WeddingRole
+  permissions String[]    // WeddingPermission values; OWNER implicitly holds all
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wedding Wedding @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weddingId])
+  @@index([weddingId])
+  @@index([userId])
+}
+
+// ─────────────────────────── Wedding core ───────────────────────────
+
+model Wedding {
+  id             String        @id @default(cuid())
+  title          String
+  groomName      String
+  brideName      String
+  description    String?
+  date           DateTime
+  startTime      String?
+  endTime        String?
+  timeZone       String        @default("Africa/Addis_Ababa")
+  venueName      String?
+  venueAddress   String?
+  mapUrl         String?
+  contactInfo    String?
+  coverImageKey  String?
+  theme          String        @default("LUXURY_GOLD")
+  defaultLanguage GuestLanguage @default(EN)
+  albumPrivacy   AlbumPrivacy  @default(PRIVATE)
+  rsvpDeadline   DateTime?
+  rsvpRequired   Boolean       @default(true)
+  status         WeddingStatus @default(DRAFT)
+
+  ownerId   String
+  owner     User   @relation("WeddingOwner", fields: [ownerId], references: [id])
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  memberships WeddingMembership[]
+  events      WeddingEvent[]
+  guests      Guest[]
+  invitations Invitation[]
+  checkIns    CheckInRecord[]
+  albums      Album[]
+  mediaFiles  MediaFile[]
+  auditLogs   AuditLog[]
+  subscription WeddingSubscription?
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([date])
+}
+
+model WeddingEvent {
+  id            String   @id @default(cuid())
+  weddingId     String
+  name          String
+  description   String?
+  startsAt      DateTime
+  endsAt        DateTime?
+  venueName     String?
+  venueAddress  String?
+  // Default eligibility: when true, every published invitation authorizes this event
+  openToAllGuests Boolean @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  wedding          Wedding           @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  invitationEvents InvitationEvent[]
+  checkIns         CheckInRecord[]
+  albums           Album[]
+
+  @@index([weddingId])
+}
+
+// ─────────────────────────── Guests & invitations ───────────────────────────
+
+model Guest {
+  id          String        @id @default(cuid())
+  weddingId   String
+  firstName   String
+  lastName    String?
+  displayName String?
+  phone       String?
+  email       String?
+  category    String        @default("OTHER")
+  language    GuestLanguage @default(EN)
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  wedding    Wedding     @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  invitation Invitation?
+
+  @@index([weddingId])
+  @@index([weddingId, phone])
+  @@index([weddingId, email])
+}
+
+model Invitation {
+  id           String           @id @default(cuid())
+  weddingId    String
+  guestId      String           @unique
+  type         InvitationType   @default(INDIVIDUAL)
+  displayName  String
+  token        String           @unique // opaque, unguessable bearer token
+  maxAttendees Int              @default(1)
+  mainGuestMustAttend Boolean   @default(false)
+  allowDoorAddons     Boolean   @default(false)
+  status       InvitationStatus @default(DRAFT)
+  templateId   String?
+  personalMessage String?
+  publishedAt  DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  wedding   Wedding             @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  guest     Guest               @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  template  InvitationTemplate? @relation(fields: [templateId], references: [id])
+  events    InvitationEvent[]
+  attendees InvitationAttendee[]
+  rsvp      RSVPResponse?
+  checkIns  CheckInRecord[]
+
+  @@index([weddingId])
+  @@index([status])
+}
+
+model InvitationEvent {
+  invitationId String
+  eventId      String
+
+  invitation Invitation   @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  event      WeddingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@id([invitationId, eventId])
+  @@index([eventId])
+}
+
+model InvitationAttendee {
+  id           String    @id @default(cuid())
+  invitationId String
+  name         String?
+  checkedInAt  DateTime?
+  createdAt    DateTime  @default(now())
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@index([invitationId])
+}
+
+model RSVPResponse {
+  id             String     @id @default(cuid())
+  invitationId   String     @unique
+  status         RSVPStatus @default(PENDING)
+  confirmedCount Int        @default(0)
+  dietaryNotes   String?
+  accessibility  String?
+  respondedAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+}
+
+// Append-only attendance audit trail. Never updated in place.
+model CheckInRecord {
+  id           String        @id @default(cuid())
+  weddingId    String
+  eventId      String
+  invitationId String
+  attendeeRef  String? // optional InvitationAttendee id or free label
+  staffUserId  String
+  result       CheckInResult
+  metadata     Json?
+  checkedInAt  DateTime      @default(now())
+
+  wedding    Wedding      @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  event      WeddingEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invitation Invitation   @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  staff      User         @relation(fields: [staffUserId], references: [id])
+
+  @@index([weddingId])
+  @@index([invitationId, eventId])
+  @@index([eventId])
+}
+
+model InvitationTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  isGlobal  Boolean  @default(true) // reusable across all weddings
+  weddingId String? // non-null when a wedding-specific customization
+  config    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invitations Invitation[]
+
+  @@index([weddingId])
+}
+
+// ─────────────────────────── Albums & media ───────────────────────────
+
+model Album {
+  id          String       @id @default(cuid())
+  weddingId   String
+  eventId     String?
+  name        String
+  description String?
+  coverKey    String?
+  privacy     AlbumPrivacy @default(PRIVATE)
+  published   Boolean      @default(false)
+  allowGuestUploads Boolean @default(false)
+  requireModeration Boolean @default(true)
+  publicToken String?      @unique // for PUBLIC albums
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  wedding     Wedding           @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  event       WeddingEvent?     @relation(fields: [eventId], references: [id])
+  mediaFiles  MediaFile[]
+  permissions AlbumPermission[]
+
+  @@index([weddingId])
+}
+
+model MediaFile {
+  id          String      @id @default(cuid())
+  albumId     String
+  weddingId   String // denormalized for fast isolation checks
+  storageKey  String
+  thumbnailKey String?
+  type        MediaType
+  status      MediaStatus @default(PENDING)
+  description String?
+  tags        String[]
+  uploaderRef String? // user id or guest token reference
+  sizeBytes   BigInt      @default(0)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  album       Album                   @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  wedding     Wedding                 @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  moderations MediaModerationRecord[]
+
+  @@index([albumId])
+  @@index([weddingId])
+  @@index([status])
+}
+
+model AlbumPermission {
+  id        String   @id @default(cuid())
+  albumId   String
+  principal String // user id or guest token reference
+  access    String // VIEW | UPLOAD | DOWNLOAD
+  createdAt DateTime @default(now())
+
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@index([albumId])
+}
+
+model MediaModerationRecord {
+  id          String      @id @default(cuid())
+  mediaFileId String
+  decision    MediaStatus
+  moderatorUserId String
+  reason      String?
+  createdAt   DateTime    @default(now())
+
+  mediaFile MediaFile @relation(fields: [mediaFileId], references: [id], onDelete: Cascade)
+  moderator User      @relation(fields: [moderatorUserId], references: [id])
+
+  @@index([mediaFileId])
+}
+
+// ─────────────────────────── Platform services ───────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  weddingId String?
+  type      String
+  channel   String // LINK | WHATSAPP | EMAIL | SMS
+  payload   Json
+  deliveryStatus String @default("PENDING") // PENDING | SENT | FAILED | MOCK
+  createdAt DateTime @default(now())
+
+  @@index([weddingId])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  weddingId   String?
+  action      String
+  target      String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  actor   User?    @relation(fields: [actorUserId], references: [id])
+  wedding Wedding? @relation(fields: [weddingId], references: [id])
+
+  @@index([weddingId])
+  @@index([actorUserId])
+  @@index([action])
+}
+
+// ─────────────────────────── Monetization (schema-ready, inactive) ───────────────────────────
+
+model SubscriptionPlan {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  priceCents  Int      @default(0)
+  currency    String   @default("USD")
+  maxWeddings Int?
+  maxStorageMb Int?
+  features    Json?
+  isActive    Boolean  @default(false) // monetization disabled by default
+  createdAt   DateTime @default(now())
+
+  subscriptions WeddingSubscription[]
+}
+
+model WeddingSubscription {
+  id        String   @id @default(cuid())
+  weddingId String   @unique
+  planId    String
+  startedAt DateTime @default(now())
+  endsAt    DateTime?
+  isActive  Boolean  @default(false)
+
+  wedding Wedding          @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  plan    SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  @@index([planId])
+}
