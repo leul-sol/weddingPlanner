@@ -4,11 +4,33 @@ A multi-wedding platform for digital invitations, QR-based guest check-in, and
 wedding album management. One platform serves many independent weddings with
 centralized administration and strict wedding-level data isolation.
 
-> **Status: Phase 1 (Foundation) complete and verified end-to-end.**
-> Monorepo, database, authentication, role-based access control, multi-wedding
-> isolation, wedding management, and dashboards are implemented and tested
-> against a live PostgreSQL database. See [Roadmap](#roadmap) for what is built
-> versus planned.
+> **Status: Foundation handoff.**
+> Phase 1 (foundation) is implemented and verified end-to-end against a live
+> PostgreSQL database. Phases 2–5 are **wired stub modules**: every route exists
+> and is reachable, but unimplemented endpoints return HTTP `501 Not Implemented`
+> and carry `TODO` comments pointing to the spec. The receiving team completes
+> them following `docs/BUILD-GUIDE.md`.
+
+## For the team receiving this repo — start here
+
+1. **`docs/ARCHITECTURE.md`** — system design, access-control model, the
+   isolation invariant, and request-flow + check-in sequence diagrams.
+2. **`docs/DATABASE.md`** — ERD and the data model rules.
+3. **`CONTRIBUTING.md`** — setup, conventions, and the recipe for turning a
+   stub module into a feature.
+4. **`docs/BUILD-GUIDE.md`** — the phase-by-phase plan mapping each stub to spec
+   sections, acceptance criteria (§18), and the 12 test scenarios (§19).
+
+### What "stub" means here
+
+Phase 1 modules (`weddings`, `admin`) are the **golden path** — fully working
+reference implementations. Phases 2–5 modules (`guests`, `invitations`, `rsvp`,
+`templates`, `checkin`, `albums`, `reports`) are scaffolded: controllers,
+services, DTOs, routing, and guards are in place, but service methods call
+`notImplemented()` (returns `501`) and are annotated with `TODO(Phase N, spec §X)`.
+This makes the full API surface visible and testable while leaving the business
+logic for the team. Infrastructure services (`storage`, `notifications`) ship a
+clearly labeled **mock** that must be replaced before those features are real.
 
 ---
 
@@ -141,6 +163,20 @@ Base URL: `http://localhost:4100/api`
 
 All dashboard and stats figures are computed from real database records.
 
+### Stub endpoints (Phase 2–5, return `501` until implemented)
+
+These routes exist, are guarded, and are reachable — their logic is a TODO.
+
+| Area | Example routes |
+|------|----------------|
+| Guests | `/weddings/:id/guests` (CRUD), `/guests/import`, `/guests/export` |
+| Invitations | `/weddings/:id/invitations` (+ `publish`/`revoke`/`regenerate-token`), public `/public/invitations/:token` |
+| RSVP | `/weddings/:id/rsvp/summary`, public `/public/rsvp/:token` |
+| Templates | `/templates`, `/weddings/:id/templates/:tid/customize` |
+| Check-in | `/weddings/:id/events/:eid/checkin/{verify,admit,search,report}` |
+| Albums/Media | `/weddings/:id/albums` (+ media moderation), public `/public/albums/:token` |
+| Reports | `/weddings/:id/reports/{guests,attendance,rsvp,export}` |
+
 ---
 
 ## Security notes
@@ -158,25 +194,29 @@ All dashboard and stats figures are computed from real database records.
 
 ## Roadmap
 
-Phase 1 is complete. Later phases are scaffolded in the schema but not yet
-implemented in application code.
+Phase 1 is implemented. Phases 2–5 are **wired stub modules** (routes live,
+logic TODO). Full detail in `docs/BUILD-GUIDE.md`.
 
 - **Phase 1 — Foundation** ✅ monorepo, schema, auth, RBAC, multi-wedding
   isolation, wedding CRUD, dashboards.
-- **Phase 2 — Invitations & Guests** — guest management, Excel import,
+- **Phase 2 — Invitations & Guests** 🔲 guest management, Excel import,
   invitation designer, templates, QR generation, RSVP.
-- **Phase 3 — Check-in** — QR scanner, concurrency-safe check-in, event-specific
+- **Phase 3 — Check-in** 🔲 QR scanner, concurrency-safe check-in, event-specific
   access, attendance reports.
-- **Phase 4 — Albums** — media storage (MinIO/S3), uploads, privacy, guest
+- **Phase 4 — Albums** 🔲 media storage (MinIO/S3), uploads, privacy, guest
   uploads, moderation.
-- **Phase 5 — Production readiness** — automated test suite, performance,
+- **Phase 5 — Production readiness** 🔲 automated test suite, performance,
   logging, backups, deployment docs.
 
 ### Not yet implemented (do not assume these work)
 
-- QR code generation and scanning.
-- Guest-facing invitation pages and RSVP.
-- Album/media upload and object storage integration.
-- Email/SMS/WhatsApp delivery (notification service runs in mock mode when
-  provider credentials are absent).
+Stub endpoints return `501`. The following are explicitly **not** functional
+yet and must not be presented as working:
+
+- QR code generation and scanning (camera UI not built).
+- Guest-facing invitation pages and RSVP flow.
+- Album/media upload and object storage — `storage` ships a **mock** that
+  returns fake `mock://` URLs and stores no bytes.
+- Email/SMS/WhatsApp delivery — `notifications` runs in **mock mode** when
+  provider credentials are absent and records `deliveryStatus = 'MOCK'`.
 - Automated test suite.
